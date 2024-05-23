@@ -22,7 +22,7 @@ TODO:
 BUGS:
 * it is more difficult to interrupt the script with ctrl-c in Windows with latests Python version, even with [this bug](https://bugs.python.org/issue42296) corrected.
 * must use urllib3<2 with "requests" module if you want good Tor socks proxy support, see [this bug](https://github.com/psf/requests/issues/6443) It can be disabled, see notes below (userequests = 0)
-* Only with musify.club, if you interrupt download and then relaunch, it will finish to download but continue to append to the mp3 file with the beginning of the song... prefer myzuka.club until it is corrected.
+* Only with musify.club, if you interrupt the script and then relaunch it, it will sometimes append to the mp3 file the beginning of the song instead of continuing... prefer myzuka.club until it is corrected.
 * It does not support multiple artists when creating the directory, it will fall back to "Unknown", you will have to rename the dir by hand afterwards.
 
 Install:
