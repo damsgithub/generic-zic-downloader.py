@@ -12,7 +12,7 @@ Command line downloader with optionnal rich interface (think ncurses), features 
 * Able to download all albums from an artist
 * Socks proxy support
 * Colored output
-* progress bars with [rich](https://github.com/willmcgugan/rich)
+* progress bars with [rich](https://github.com/willmcgugan/rich) (optionnal, see "live" argument)
 
 Inspired by [xor512 script](https://github.com/xor512/musicmp3spb.org)
 
@@ -23,6 +23,7 @@ BUGS:
 * it is more difficult to interrupt the script with ctrl-c in Windows with latests Python version, even with [this bug](https://bugs.python.org/issue42296) corrected.
 * Only with musify.club: if you interrupt the script and then relaunch it, it will sometimes append to the mp3 file from the beginning of the song instead of resuming the download... prefer myzuka.club until it is corrected. Although you will have this kind of message "{file_name} is already bigger ({dlded_size}) than the server side file ({real_size}). Either server side file size could not be determined or an other problem occured, check file manually" if you happen to relaunch the script a third time once everything is finished. So you will know if it happened and you will be able to delete these files and relaunch the script a fourth time to have them non corrupted...
 * It does not support multiple artists when creating the directory, it will fall back to "Unknown", you will have to rename the dir by hand afterwards.
+* Some regexes (ie: the one to detect deleted tracks from website on myzuka) might be a little bit CPU intensives and are slowing down the script a bit compared to previous versions.
 
 Install:
 * install python 3 (tested with 3.6, 3.9, 3.12) if not already present on your distrib. For Windows, see [here](https://www.python.org/downloads/windows/) or install from the Windows Store.
