@@ -21,8 +21,7 @@ TODO:
 
 BUGS:
 * it is more difficult to interrupt the script with ctrl-c in Windows with latests Python version, even with [this bug](https://bugs.python.org/issue42296) corrected.
-* must use urllib3<2 with "requests" module if you want good Tor socks proxy support, see [this bug](https://github.com/psf/requests/issues/6443) It can be disabled, see notes below (userequests = 0)
-* Only with musify.club, if you interrupt the script and then relaunch it, it will sometimes append to the mp3 file the beginning of the song instead of continuing... prefer myzuka.club until it is corrected.
+* Only with musify.club: if you interrupt the script and then relaunch it, it will sometimes append to the mp3 file from the beginning of the song instead of resuming the download... prefer myzuka.club until it is corrected. Although you will have this kind of message "{file_name} is already bigger ({dlded_size}) than the server side file ({real_size}). Either server side file size could not be determined or an other problem occured, check file manually" if you happen to relaunch the script a third time once everything is finished. So you will know if it happened and you will be able to delete these files and relaunch the script a fourth time to have them non corrupted...
 * It does not support multiple artists when creating the directory, it will fall back to "Unknown", you will have to rename the dir by hand afterwards.
 
 Install:
@@ -30,11 +29,10 @@ Install:
 * install required modules. Use your standard repo or the command line below for linux, for Windows do it in an administrator powershell command prompt:
 
 ```sh
-python -m pip install BeautifulSoup4 Pysocks rich requests cfscrape urllib3<2
+python -m pip install BeautifulSoup4 Pysocks rich
 ```
 
 Notes: 
-* you don't need to install "requests", "cfscrape" and "urllib3" if you set "userequests" to "0" at the start of the script. They are only usefull if you want to download through Tor socks proxy due to cloudflare more ofently detecting the script as a bot with urllib.request (even with the same useragent).
 * you need rich >= 10.0.0
 
 Usage:
