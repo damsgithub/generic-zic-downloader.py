@@ -6,6 +6,7 @@
 # as published by Sam Hocevar.  See the COPYING file for more details.
 
 # Changelog:
+# 6.0: lots of corrections, suppression of cfscrape and requests, refacto, etc...
 # 5.13: merge between myzuka end musify scripts
 # 5.12: corrections for global variables, interactive mode
 # 5.10: corrections, cosmetic
@@ -13,14 +14,13 @@
 # 5.8: better rich interface
 # 5.7: add support for "rich" output and changed the multithreading module
 # 5.6: better support for Tor socks proxy, and support for "requests" module instead of 
-#      "urllib.request", because cloudflare seems to block more "urllib.request" than "requests", 
+#      "urllib.request", because cloudflare seems to block more "urllib.request" than "requests",
 #      even with the same headers...
 
 live = 1
 site = ""
-userequests = 1
-version = 5.13
-useragent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:86.0) Gecko/20100101 Firefox/86.0"
+version = 6.0
+useragent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0"
 min_page_size = 8192
 covers_name = "cover.jpg"
 warning_color = "bold yellow"
@@ -31,8 +31,8 @@ debug_color = "bold blue"
 socks_proxy = ""
 socks_port = ""
 timeout = 10
-min_retry_delay = 6
-max_retry_delay = 15
+min_retry_delay = 5
+max_retry_delay = 10
 nb_conn = 3
 
 # Regexes
@@ -40,7 +40,8 @@ re_artist_url = ""
 re_album_url = ""
 re_album_id = ""
 re_cover_url = ""
-re_tracknum_infos = ""
+re_tracknum_infos_1 = ""
+re_tracknum_infos_2 = ""
 re_deleted_track = ""
 re_artist_info = ""
 re_title_info = ""
@@ -59,12 +60,14 @@ import html
 import argparse
 import traceback
 import signal
+import urllib.request
 from bs4 import BeautifulSoup
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
-import faulthandler  # kill this script with SIGABRT in case of deadlock to see the stacktrace.
+# kill this script with SIGABRT in case of deadlock to see the stacktrace.
+import faulthandler
 faulthandler.enable()
 
 ## Rich definitions ##
@@ -165,11 +168,10 @@ def reset_progress():
     )
     layout["center"].update(progress_table)
 
-
 ## END OF Rich definitions ##
 
-## Thread event definition ## 
 
+## Thread event definition ## 
 event = threading.Event()
 
 # "event" not being global, we need to define this function in this scope
@@ -239,13 +241,11 @@ cover.jpg                                                 00.01 of 00.01 MB [100
 
 It will iterate on all albums of this artist.
 
-
 ------------------------------------------------------------------------------------------------------------------
 ################# Command line help ##############################################################################
 ------------------------------------------------------------------------------------------------------------------
 
 For more info, see https://github.com/damsgithub/%s
-
 
 """
         % (script_name, script_name, script_name)
@@ -313,7 +313,7 @@ def download_cover(page_content, url, task_id):
     if not cover_url:
         color_message("** No cover found for this album **", warning_color)
     else:
-        download_file(cover_url, covers_name, task_id)
+        download_file("", cover_url, task_id)
 
 
 def get_base_url(url):
@@ -333,105 +333,51 @@ def open_url(url, data, range_header):
     while True:
         if event.is_set():
             raise KeyboardInterrupt
-        # else: color_message("open_url: NOT SET", error_color)
 
-        if not userequests:
-            import urllib.request
-            if debug:
-                color_message("open_url: %s" % url, debug_color)
+        if debug:
+            color_message("open_url: %s" % url, debug_color)
 
-            myheaders = {"User-Agent": useragent, "Referer": site}
-            req = urllib.request.Request(url, data, headers=myheaders)
-            if range_header:
-                req.add_header("Range", range_header)
+        myheaders = {"User-Agent": useragent, "Referer": site}
+        req = urllib.request.Request(url, data, headers=myheaders)
 
-            try:
-                u = urllib.request.urlopen(req, timeout=timeout)
-                if debug > 1:
-                    color_message("HTTP reponse code: %s" % u, debug_color)
-            except urllib.error.HTTPError as e:
+        if range_header:
+            req.add_header("Range", range_header)
+
+        try:
+            u = urllib.request.urlopen(req, timeout=timeout)
+            if debug > 1:
+                color_message("HTTP reponse code: %s" % u, debug_color)
+        except urllib.error.HTTPError as e:
+            if int(u) > 400:
+                color_message("** urllib.error.HTTPError (%s), aborting **" 
+                    % e.reason, error_color)
+                u = None
+            else:
+                color_message("** requests.exceptions.HTTPError (%s), reconnecting **" 
+                    % str(e), warning_color)
+            continue
+        except urllib.error.URLError as e:
+            if re.search("timed out", str(e.reason)):
+                # on linux "timed out" is a socket.timeout exception,
+                # on Windows it is an URLError exception....
                 if debug:
-                    color_message("** urllib.error.HTTPError (%s), reconnecting **" 
+                    color_message("** Connection timeout (%s), reconnecting **" 
                         % e.reason, warning_color)
                 pause_between_retries()
                 continue
-            except urllib.error.URLError as e:
-                if re.search("timed out", str(e.reason)):
-                    # on linux "timed out" is a socket.timeout exception,
-                    # on Windows it is an URLError exception....
-                    if debug:
-                        color_message("** Connection timeout (%s), reconnecting **" 
-                            % e.reason, warning_color)
-                    pause_between_retries()
-                    continue
-                else:
-                    color_message("** urllib.error.URLError, aborting **" % e.reason, error_color)
-                    u = None
-            except (socket.timeout, socket.error, ConnectionError) as e:
-                if debug:
-                    color_message("** Connection problem 2 (%s), reconnecting **" 
-                        % str(e), warning_color)
-                pause_between_retries()
-                continue
-            except Exception as e:
-                color_message("** Exception: aborting (%s) with error: %s **" 
-                    % (url, str(e)), error_color)
-                u = None
-
-        else:
-            import cfscrape
-            import requests
-            scraper = cfscrape.create_scraper()
-            # the "h" after socks5 is to make the dns resolution through the socks proxy
-            if socks_proxy and socks_port:
-                proxies = {
-                    "http": "socks5h://" + socks_proxy + ":" + str(socks_port),
-                    "https": "socks5h://" + socks_proxy + ":" + str(socks_port),
-                }
             else:
-                proxies = {}
-
-            try:
-                if range_header:
-                    myheaders = {"User-Agent": useragent, "Referer": site, "Range": range_header}
-                    # u = requests.get(url, proxies=proxies, headers=myheaders, timeout=timeout, stream=True)
-                    u = scraper.get(url, proxies=proxies, headers=myheaders, timeout=timeout, stream=True)
-                else:
-                    myheaders = {"User-Agent": useragent, "Referer": site}
-                    # u = requests.get(url, proxies=proxies, headers=myheaders, timeout=timeout)
-                    u = scraper.get(url, proxies=proxies, headers=myheaders, timeout=timeout, stream=True)
-
-                u.raise_for_status()
-                if debug > 1:
-                    color_message("HTTP reponse code: %s" % u, debug_color)
-            except requests.exceptions.HTTPError as e:
-                color_message("** requests.exceptions.HTTPError (%s), reconnecting **" 
-                    % str(e), warning_color)
-                pause_between_retries()
-                continue
-            except requests.exceptions.ConnectionError as e:
-                color_message("**  requests.exceptions.ConnectionError (%s), reconnecting **" 
-                    % str(e), warning_color)
-                pause_between_retries()
-                continue
-            except requests.exceptions.Timeout as e:
-                color_message("** Connection timeout (%s), reconnecting **" 
-                    % str(e), warning_color)
-                pause_between_retries()
-                continue
-            except requests.exceptions.RequestException as e:
-                color_message("** Exception: aborting (%s) with error: %s **" 
-                    % (url, str(e)), error_color)
+                color_message("** urllib.error.URLError, aborting **" % e.reason, error_color)
                 u = None
-            except (socket.timeout, socket.error, ConnectionError) as e:
+        except (socket.timeout, socket.error, ConnectionError) as e:
+            if debug:
                 color_message("** Connection problem 2 (%s), reconnecting **" 
                     % str(e), warning_color)
-                pause_between_retries()
-                continue
-            except Exception as e:
-                color_message("** Exception: aborting (%s) with error: %s **" 
-                    % (url, str(e)), error_color)
-                u = None
+            pause_between_retries()
+            continue
+        except Exception as e:
+            color_message("** Exception: aborting (%s) with error: %s **" 
+                % (url, str(e)), error_color)
+            u = None
 
         return u
 
@@ -440,10 +386,8 @@ def get_page_soup(url, data):
     page = open_url(url, data=data, range_header=None)
     if not page:
         return None
-    if not userequests:
-        page_soup = BeautifulSoup(page, "html.parser", from_encoding=page.info().get_param("charset"))
-    else:
-        page_soup = BeautifulSoup(page.content, "html.parser", from_encoding=page.encoding)
+
+    page_soup = BeautifulSoup(page, "html.parser", from_encoding=page.info().get_param("charset"))
     page.close()
     return page_soup
 
@@ -520,18 +464,20 @@ def sanitize_path(path):
     return path.translate(chars_to_remove)
 
 
-def get_filename_from_cd(cd):
+def get_filename_from_cd(cdisposition):
     # Get filename from content-disposition
-    if not cd:
+    if not cdisposition:
         return None
-    fname = re.findall("filename=(.+)", cd)
+    fname = re.findall("filename=(.+)", cdisposition)
     if len(fname) == 0:
         return None
     return fname[0]
 
 
-def download_file(url, file_name, task_id: TaskID):
+def download_file(tracknum, url, task_id: TaskID):
     process_id = os.getpid()
+    file_name = ""
+    
     try:
         real_size = -1
         partial_dl = 0
@@ -542,16 +488,30 @@ def download_file(url, file_name, task_id: TaskID):
         if not u:
             return -1
 
-        if not file_name:
-            if not userequests:
-                file_name = u.info().get_filename()
-            else:
-                file_name = get_filename_from_cd(u.headers.get("content-disposition"))
-        
-        file_name = file_name.replace("_myzuka", "")
-        
+        # If this is the cover, we name it our way
+        if re.search(r"\.jpg$", url, re.IGNORECASE):
+            file_name = covers_name        
+        else:
+            file_name = u.info().get_filename()
+
+            if not file_name:
+                color_message(" ** download_file: unable to get filename **", error_color)
+                return -1
+
+            if "myzuka" in site:
+                file_name = file_name.replace("_myzuka", "")
+            elif "musify" in site:
+                file_name = url.split("/")[-1]
+                #import urllib.parse
+                #file_name = urllib.parse.unquote(file_name) # works
+                file_name = urllib.request.url2pathname(file_name) # works too
+                  
+            # add tracknum for the song if it wasn't included in file_name (musify)
+            if not re.match(r"^\d+[-_].+", file_name):
+                file_name = tracknum + "_" + file_name
+
         if debug > 1:
-            color_message("filename: %s" % file_name, debug_color)
+            color_message("** download_file: filename: %s **" % file_name, debug_color)
                 
         if os.path.exists(file_name):
             dlded_size = os.path.getsize(file_name)
@@ -564,20 +524,15 @@ def download_file(url, file_name, task_id: TaskID):
         i = 0
         while i < 5:
             try:
-                if not userequests:
-                    real_size = int(u.info()["content-length"])
-                else:
-                    real_size = int(u.headers["Content-length"])
+                real_size = int(u.info()["content-length"])
+
                 if debug > 1:
                     color_message("length: %s" % real_size, debug_color)
                 if real_size <= min_page_size and (file_name != covers_name):
-                    # we may have got an "Exceed the download limit" (Превышение лимита скачивания)
-                    # page, retry
+                    # we may have got an "Exceed the download limit" (Превышение лимита скачивания) page, retry
                     color_message(
                         "** Served file (%s) too small (<= %s), retrying (verify this file after download) **"
-                        % (file_name, min_page_size),
-                        warning_color
-                    )
+                        % (file_name, min_page_size), warning_color)
                     i += 1
                     continue
                 break
@@ -613,10 +568,7 @@ def download_file(url, file_name, task_id: TaskID):
 
             # test if the server supports the Range header
             range_support = ""
-            if not userequests:
-                range_support = u.getcode()
-            else:
-                range_support = u.status_code
+            range_support = u.getcode()
 
             if range_support == 206:
                 partial_dl = 1
@@ -630,7 +582,7 @@ def download_file(url, file_name, task_id: TaskID):
                 dlded_size = 0
         elif dlded_size == real_size:
             # file already completed, skipped
-            color_message("%s (already complete)" % file_name.split("_")[0], ok_color)
+            color_message("%s (already complete)" % file_name, ok_color)
             u.close()
             dl_progress.start_task(task_id)
             dl_progress.update(task_id, total=int(real_size), advance=dlded_size)
@@ -659,42 +611,25 @@ def download_file(url, file_name, task_id: TaskID):
             block_sz = 512
 
         # get the file
-        if not userequests:
-            while True:
-                buffer = u.read(block_sz)
-                if not buffer:
-                    break
-                else:
-                    dlded_size += len(buffer)
-                    f.write(buffer)
-                    dl_progress.update(task_id, advance=len(buffer))
-                    if event.is_set():
-                        u.close()
-                        f.close()
-                        raise KeyboardInterrupt
-                    # else: color_message("download_file: NOT SET", error_color)
-        else:
-            for buffer in u.iter_content(chunk_size=block_sz):
-                if not buffer:
-                    break
-                else:
-                    dlded_size += len(list(buffer))
-                    f.write(buffer)
-                    dl_progress.update(task_id, advance=len(list(buffer)))
-                    if event.is_set():
-                        u.close()
-                        f.close()
-                        raise KeyboardInterrupt
-                    # else: color_message("download_file: NOT SET", error_color)
+        while True:
+            buffer = u.read(block_sz)
+            if not buffer:
+                break
+            else:
+                dlded_size += len(buffer)
+                f.write(buffer)
+                dl_progress.update(task_id, advance=len(buffer))
+                if event.is_set():
+                    u.close()
+                    f.close()
+                    raise KeyboardInterrupt
 
         if real_size == -1:
             real_size = dlded_size
             if debug:
                 color_message(
                     "%s (file downloaded, but could not verify if it is complete)"
-                    % dl_status(file_name, dlded_size, real_size),
-                    warning_color,
-                )
+                    % dl_status(file_name, dlded_size, real_size), warning_color)
             # dl_progress.stop_task(task_id)
         elif real_size == dlded_size: # file downloaded and complete
             if not live:
@@ -706,9 +641,7 @@ def download_file(url, file_name, task_id: TaskID):
             if debug:
                 color_message(
                     "%s (file download incomplete, retrying)" 
-                    % dl_status(file_name, dlded_size, real_size),
-                    warning_color,
-                )
+                    % dl_status(file_name, dlded_size, real_size), warning_color)
             u.close()
             f.close()
             return -1
@@ -723,11 +656,11 @@ def download_file(url, file_name, task_id: TaskID):
     except Exception as e:
         if debug:
             color_message(
-                '** Exception caught in download_file(%s,%s) with error: "%s". We will continue anyway. **'
+                '** Exception caught in download_file (%s,%s) with error: "%s". We will continue anyway. **'
                 % (url, file_name, str(e)),
                 warning_color,
             )
-            traceback.print_exc()
+            #traceback.print_exc()
         return -1
 
 
@@ -738,13 +671,10 @@ def download_song(num_and_url, task_id: TaskID) -> None:
     tracknum = m.group(1)
     url = m.group(2)
     file_url = ""
-    file_name = ""
 
     # Myzuka doesn't give a diret link to the file at this stage
     if "musify" in site:
         file_url = url
-        file_name = num_and_url.split("/")[-1]
-        file_name = tracknum + "-" + file_name
 
     while True:  # continue until we have the song or the user interrupts it
         try:
@@ -756,7 +686,6 @@ def download_song(num_and_url, task_id: TaskID) -> None:
 
             # Myzuka doesn't give a diret link to the file at this stage, we must go through another page
             if "myzuka" in site:
-                file_name = ""
                 file_url = ""
 
                 page_soup = get_page_soup(url, None)
@@ -777,19 +706,19 @@ def download_song(num_and_url, task_id: TaskID) -> None:
                     file_url = get_base_url(url) + file_url
 
             # download song
-            ret = download_file(file_url, file_name, task_id)
+            ret = download_file(tracknum, file_url, task_id)
             if ret == -1:
                 if debug:
                     color_message(
                         "** %s: Problem detected while downloading %s, retrying **" 
-                        % (process_id, file_name),
+                        % (process_id, file_url),
                         warning_color,
                     )
                 pause_between_retries()
                 continue
             else:
                 if not live:
-                    color_message("** downloaded: %s **" % (file_name), ok_color)
+                    color_message("** downloaded: %s **" % (file_url), ok_color)
                 break
         except KeyboardInterrupt:
             if debug:
@@ -802,10 +731,11 @@ def download_song(num_and_url, task_id: TaskID) -> None:
         except Exception as e:
             if debug:
                 color_message(
-                    '** %s: Exception caught in download_song(%s,%s) with error: "%s", retrying **'
-                    % (process_id, url, file_name, str(e)),
+                    '** %s: Exception caught in download_song (%s) with error: "%s", retrying **'
+                    % (process_id, url, str(e)),
                     warning_color,
                 )
+            traceback.print_exc()
             pause_between_retries()
             pass
 
@@ -840,14 +770,9 @@ def download_album(url, base_path, with_album_id):
 
     for link in page_soup.find_all("%s" % re_link_attr, title=re.compile("%s" % re_link_keyword)):
         # search track number and link
-        tracknum = 0
-        tracknum_infos = ""
         link_href = ""
         link = str(link)
-
-        if debug:
-            color_message("** Track: %s **" % (link), warning_color)
-
+        deleted_track_re = ""
 
         try:
             if event.is_set():
@@ -858,48 +783,65 @@ def download_album(url, base_path, with_album_id):
             link_href = m.group('link')
 
             if re.search("myzuka", site):
-                tracknum_infos_re = re.compile(r"%s" % re_tracknum_infos + link_href, re.I)
+                tracknum_infos_re = re.compile(r"%s" % re_tracknum_infos_1 + r"(?P<position>\d+)" + 
+                    re_tracknum_infos_2 + link_href, re.IGNORECASE)
                 # search on whole page since myzuka don't store it in "link"
                 tracknum_infos = tracknum_infos_re.search(page_content)
 
             elif re.search("musify", site):
-                tracknum_infos_re = re.compile(r"%s" % re_tracknum_infos, re.I)
+                tracknum_infos_re = re.compile(r"%s" % re_tracknum_infos_1 + r"(?P<position>\d+)" + 
+                    re_tracknum_infos_2, re.IGNORECASE)
                 tracknum_infos = tracknum_infos_re.search(link)
 
             tracknum = tracknum_infos.group('position')
-            tracknum = str(tracknum).zfill(2)
 
             if debug:
-                color_message("** Got number %s for %s **" % (tracknum, link_href), warning_color) 
+                color_message("** Got number %s for %s **" % (tracknum, link_href), warning_color)
+
+            # search for missing/deleted tracks from the website.   
+            # For musify, see futher away down the code         
+            if re.search("myzuka", site):
+                deleted_track_re = re.compile("%s" % re_tracknum_infos_1 + tracknum + 
+                    re_tracknum_infos_2 + link_href + '"' + re_deleted_track, re.IGNORECASE)
+
+                #print(re_tracknum_infos_1 + tracknum + 
+                #    re_tracknum_infos_2 + link_href + '"' + re_deleted_track)
+                if deleted_track_re.search(page_content):
+                    color_message(
+                        "** The track number %s (%s) is missing from website **" 
+                        % (str(tracknum), link_href), error_color)
+                    absent_track_flag = 1
+                    continue
+
+            tracknum = str(tracknum).zfill(2)
+
+            # prepend base url if necessary
+            if re.match(r"^/", link_href):
+                link_href = get_base_url(url) + link_href
+            # add song number and url in array
+            songs_links.append(str(tracknum) + "-" + link_href)
+            
         except Exception as e:
             color_message("** Unable to get number %s for %s **" % (tracknum, link_href), warning_color)
+            #traceback.print_exc()
 
-        # prepend base url if necessary
-        if re.match(r"^/", link_href):
-            link_href = get_base_url(url) + link_href
+    if re.search("musify", site):
+       # There is no "re_link_keyword" in deleted tracks on musify, we can't 
+       # know its tracknumber yet. Good point: the link won't be added to "songs_links".
+       # Bad point: We must do a global search for all deleted links once (cpu intensive)
+       deleted_track_re = re.compile("%s" % re_deleted_track, re.IGNORECASE)
+       for deleted_track in re.findall(deleted_track_re, page_content):
+           color_message(
+               "** The track number %s (%s) is missing from website **" 
+               % (deleted_track[0], deleted_track[1]), error_color)
+           absent_track_flag = 1
 
-        # add song url and number in array
-        songs_links.append(str(tracknum) + "-" + link_href)
-
-    if debug:
+    if debug > 1:
         color_message("** songs_links: %s **" % songs_links, error_color)
 
     if debug > 1:
         log_to_file("download_album", page_content)
-
-    # search for absent/deleted tracks from the website.
-    deleted_track_re = re.compile("%s" % re_deleted_track)
-
-    for deleted_track in re.findall(deleted_track_re, page_content):
-        tracknum = deleted_track[0]
-        trackname = deleted_track[1]
-        if debug:
-            color_message(
-                "** The track number %s (%s) is absent from website **" 
-                % (tracknum, trackname), warning_color
-            )
-        absent_track_flag = 1
-
+ 
     if not songs_links:
         color_message("** Unable to detect any song links, skipping this album/url **", error_color)
         absent_track_flag = 1
@@ -908,10 +850,11 @@ def download_album(url, base_path, with_album_id):
         try:
             with ThreadPoolExecutor(max_workers=nb_conn) as pool:
                 for num_and_url in songs_links:
-                    task_id = dl_progress.add_task("download", filename=num_and_url.split("/")[-1], start=False)
+                    task_id = dl_progress.add_task("download", 
+                        filename=urllib.request.url2pathname(num_and_url.split("/")[-1]), 
+                        start=False)
                     pool.submit(download_song, num_and_url, task_id)
                     if event.is_set():
-                        # color_message("** download_album: IS SET", error_color)
                         raise KeyboardInterrupt
             pool.shutdown()
         except KeyboardInterrupt as e:
@@ -934,11 +877,19 @@ def download_album(url, base_path, with_album_id):
     os.chdir("..")
 
     if not absent_track_flag and not event.is_set():
-        infos_table.add_row("[" + ok_color + "]" + "** %s FINISHED **" % album_dir)
+        if live:
+            infos_table.add_row("[" + ok_color + "]" + "** %s FINISHED **" % album_dir)
+            layout["left"].update(Panel(infos_table))
+        else:
+            color_message("** %s FINISHED **" % album_dir, ok_color)
     else:
-        infos_table.add_row("[" + error_color + "]" 
-            + "** %s INCOMPLETE (tracks missing on website or user exit) **" % album_dir)
-    layout["left"].update(Panel(infos_table))
+        if live:
+            infos_table.add_row("[" + error_color + "]" + 
+                "** %s ALBUM INCOMPLETE (tracks missing on website or user exit) **" % album_dir)
+            layout["left"].update(Panel(infos_table))
+        else:
+            color_message("** %s ALBUM INCOMPLETE (tracks missing on website or user exit) **" 
+                % album_dir, error_color)
 
 
 def download_artist(url, base_path, with_album_id):
@@ -961,7 +912,6 @@ def download_artist(url, base_path, with_album_id):
     for album_link in albums_links:
         download_album(get_base_url(url) + album_link, base_path, with_album_id)
         if event.is_set():
-            # color_message("** download_artist: IS SET", error_color)
             raise KeyboardInterrupt
 
     infos_table.add_row("[" + ok_color + "]" + "** ARTIST DOWNLOAD FINISHED **")
@@ -982,7 +932,8 @@ def main():
     global re_album_url
     global re_album_id
     global re_cover_url
-    global re_tracknum_infos
+    global re_tracknum_infos_1
+    global re_tracknum_infos_2
     global re_deleted_track
     global re_artist_info
     global re_title_info
@@ -1011,7 +962,8 @@ def main():
     parser.add_argument("-p", "--path", type=str, default=".", 
                         help="Base directory in which album(s) will be downloaded. Defaults to current.")
     parser.add_argument("--with_album_id", action='store_true',
-                        help="Include the myzuka album ID in the directory name, to seperate albums with multiples cd in different dirs")
+                        help="Include the myzuka album ID in the directory name, " +
+                            "to seperate albums with multiples cd in different dirs")
     parser.add_argument("-v", "--version", action="version", version="%(prog)s, version: " + str(version))
 
     parser.add_argument("url", action="store", help="URL of album or artist page")
@@ -1030,41 +982,88 @@ def main():
     site = site.split('/')[2] # get the domain only
 
     if "myzuka" in site:
-        # Myzuka
-        re_artist_url = "/Artist/.*"
-        re_album_url = "/Album/.*"
-        re_album_id = "Album/(\d+)"
-        re_cover_url = '<img alt=".+?" itemprop="image" src="(.+?)"/>'
-        #re_tracknum_infos = '<div class="position">\r?\n?'
-        #'(?:\r?\n?)*'
-        #'(?:\s)*(?P<position>\d+)\r?\n?'
-        #'(?:\r?\n?)*'
-        #'(?:\s)*</div>\r?\n?'
-        #'(?:\s)*<div class="options">\r?\n?'
-        #'(?:\s)*<div class="top">\r?\n?'
-        #'(?:\s)*<span (?:.+?)title="Сохранить в плейлист"(?:.*?)></span>\r?\n?'
-        #'(?:\s)*<span (?:.+?)title="Добавить в плеер"(?:.*?)>(?:.*?)</span>\r?\n?'
-        #'(?:\s)*<a href="'
-        re_tracknum_infos = '<div class="position">\r?\n?(?:\r?\n?)*(?:\s)*(?P<position>\d+)\r?\n?(?:\r?\n?)*(?:\s)*</div>\r?\n?(?:\s)*<div class="options">\r?\n?(?:\s)*<div class="top">\r?\n?(?:\s)*<span (?:.+?)title="Сохранить в плейлист"(?:.*?)></span>\r?\n?(?:\s)*<span (?:.+?)title="Добавить в плеер"(?:.*?)>(?:.*?)</span>\r?\n?(?:\s)*<a href="'
-        re_deleted_track = '<div class="position">\r?\n?(?:\r?\n?)?(?:\s)*(\d+)\r?\n?(?:\r\n?)?(?:\s)*</div>\r?\n?(?:\s)*<div class="options">\r?\n?(?:\s)*<div class="top">\r?\n?(?:\s)*<span class=".*?glyphicon-ban-circle.*?"></span>\r?\n?(?:\s)*</div>\r?\n?(?:\s)*<div class="data">(?:.+?)</div>\r?\n?(?:\s)*</div>\r?\n?(?:\s)*<div class="details">\r?\n?(?:\s)*<div class="time">(?:.+?)</div>\r?\n?(?:\s)*<a (?:.+?)\r?\n?(?:\s)*<meta (?:.+?)\r?\n?(?:\s)*<meta (?:.+?)\r?\n?(?:\s)*</span>\r?\n?(?:\s)*<p>\r?\n?(?:\s)*<span>(.+?)</span> <span class=(?:.+?)>\[Удален по требованию правообладателя\]</span>'
-        re_artist_info = '<td>Исполнитель:</td>\r?\n?(?:\s)*<td>\r?\n?(?:\r?\n?)*(?:\s)*<a (?:.+?)>\r?\n?(?:\s)*<meta (?:.+?)itemprop="url"(?:.*?)(?:\s)*/>\r?\n?(?:\s)*<meta (?:.+?)itemprop="name"(?:.*?)(?:\s)*/>\r?\n?(?:\r?\n?)*(?:\s)*(.+?)\r?\n?(?:\r?\n?)*(?:\s)*</a>'
-        re_title_info = '<span itemprop="title">(?:.+?)</span>\r?\n?(?:\r?\n?)*(?:\s)*</a>/\r?\n?(?:\r?\n?)*(?:\s)*<span (?:.*?)itemtype="http://data-vocabulary.org/Breadcrumb"(?:.*?)>(.+?)</span>'
+        re_artist_url = r"/Artist/.*"
+        re_album_url = r"/Album/.*"
+        re_album_id = r"Album/(\d+)"
+        re_cover_url = r'<img alt=".+?" itemprop="image" src="(.+?)"/>'
+        re_tracknum_infos_1 = (r'<div class="position">\r?\n?'
+                            r'(?:\r?\n?)*'
+                            r'(?:\s)*')
+                            #(?P<position>\d+)
+        re_tracknum_infos_2 = (r'\r?\n?'
+                            r'(?:\r?\n?)*'
+                            r'(?:\s)*</div>\r?\n?'
+                            r'(?:\s)*<div class="options">\r?\n?'
+                            r'(?:\s)*<div class="top">\r?\n?'
+                            r'(?:\s)*<span (?:.+?)title="Сохранить в плейлист"></span>\r?\n?'
+                            r'(?:\s)*<span (?:.+?)title="Добавить в плеер"(?:.*?)>(?:.*?)</span>\r?\n?'
+                            r'(?:\s)*<a href="')
+        re_link_href = r'(?P<link>/Song/.+?)"'
+        #re_deleted_track = '<span>(?P<title>.+?)</span>(?:\s)*<span class=(?:.+?)>\[Удален по требованию правообладателя\]</span>'
+        re_deleted_track = (r'(?:.+?)</a>\r?\n?'
+                            r'(?:\s)*<a class=(?:.+?)</a>\r?\n?'
+                            r'(?:\s)*</div>\r?\n?'
+                            r'(?:\s)*<div class=(?:.+?)</div>\r?\n?'
+                            r'(?:\s)*</div>\r?\n?'
+                            r'(?:\s)*<div class="details">\r?\n?'
+                            r'(?:\s)*<div class="time">(?:.+?)</div>\r?\n?'
+                            r'(?:\s)*<a class=(?:.+?)<span(?:.+?)>\r?\n?'
+                            r'(?:\s)*<meta (?:.+?)/>\r?\n?'
+                            r'(?:\s)*<meta (?:.+?)/>\r?\n?'
+                            r'(?:\s)*</span>\r?\n?'
+                            r'(?:\s)*<p>\r?\n?'
+                            r'<span>(?P<title>.+?)</span>'
+                            r'(?:\s)*<span class=(?:.+?)>\[Удален по требованию правообладателя\]</span>')
+        re_artist_info = (r'<td>Исполнитель:</td>\r?\n?'
+                        r'(?:\s)*<td>\r?\n?'
+                        r'(?:\r?\n?)*'
+                        r'(?:\s)*<a (?:.+?)>\r?\n?'
+                        r'(?:\s)*<meta (?:.+?)itemprop="url"(?:.*?)(?:\s)*/>\r?\n?'
+                        r'(?:\s)*<meta (?:.+?)itemprop="name"(?:.*?)(?:\s)*/>\r?\n?'
+                        r'(?:\r?\n?)*'
+                        r'(?:\s)*(.+?)\r?\n?'
+                        r'(?:\r?\n?)*'
+                        r'(?:\s)*</a>')
+        re_title_info = (r'<span itemprop="title">(?:.+?)</span>\r?\n?'
+                        r'(?:\r?\n?)*'
+                        r'(?:\s)*</a>/\r?\n?'
+                        r'(?:\r?\n?)*'
+                        r'(?:\s)*<span (?:.*?)itemtype="http://data-vocabulary.org/Breadcrumb"(?:.*?)>(.+?)</span>')
         re_link_attr = "a"
-        re_link_keyword = "^Скачать.*"
-        re_link_href = 'href="(?P<link>/Song/.*?)"'
+        re_link_keyword = r"^Скачать.*"
+
     elif "musify" in site:
-        # Musify
-        re_artist_url = "/artist/.*"
-        re_album_url = "/release/.*"
-        re_album_id = "release/.+-(\d+)"
-        re_cover_url = '<link href="(.+?)" rel="image_src"(?:\s)*/?>'
-        re_tracknum_infos = '<div (?:.*?)data-position="(?P<position>\d+)"'
-        re_deleted_track = '<div class="playlist__position">\r?\n?(?:\r?\n?)?(?:\s)*(\d+)\r?\n?(?:\r?\n?)?(?:\s)*</div>(?:\s)*\r?\n?(?:\r?\n?)?(?:\s)*<div class="playlist__details">(?:\s)*(?:\r?\n?)?(?:\s)*<div class="playlist__heading">(?:\s)*(?:\r?\n?)?<a (?:.+?) <a class="strong" href="(?:.+?)">(.+)</a> <span (?:.+?)>Недоступен</span>'
-        re_artist_info = '(?:\s)*<i (?:.*?)title="Исполнитель"(?:.*?)(?:\s)*></i>\r?\n?(?:\r?\n?)*(?:\s)*<a (?:.+?)>\r?\n?(?:\r?\n?)*(?:\s)*<meta (?:.+?)itemprop="url"(?:.*?)(?:\s)*/?>\r?\n?(?:\r?\n?)*(?:\s)*<meta (?:.+?)itemprop="name"(?:.*?)(?:\s)*/?>\r?\n?(?:\r?\n?)*(?:\s)*(.+?)\r?\n?(?:\r?\n?)*(?:\s)*(</meta>)*\r?\n?(?:\s)*</a>'
-        re_title_info = '<span itemprop="name">(?:.+?)</span>\r?\n?(?:\r?\n?)*(?:\s)*<meta (?:.+?)itemprop="position"(?:.*?)(?:\s)*/?>\r?\n?(?:\r?\n?)*(?:\s)*</a>\r?\n?(?:\r?\n?)*(?:\s)*</li>\r?\n?(?:\r?\n?)*(?:\s)*<li (?:.*?)class="breadcrumb-item active"(?:.*?)>(.+?)</li>'
+        re_artist_url = r"/artist/.*"
+        re_album_url = r"/release/.*"
+        re_album_id = r"release/.+-(\d+)"
+        re_cover_url = r'<link href="(.+?)" rel="image_src"(?:\s)*/?>'
+        re_tracknum_infos_1 = r'<div (?:.*?)data-position="'
+                                #(?P<position>\d+)'
+        re_tracknum_infos_2 = '"'
+        re_link_href = r'<div(?:.*?)data-url="(?P<link>.+?\.mp3)"'
+        re_deleted_track = (r'<div class="playlist__position">(?:\r?\n?)?'
+                            r'(?:\s)*(?P<position>\d+)(?:\r?\n?)?'
+                            r'(?:\s)*</div>(?:\r?\n?)?'
+                            r'(?:\s)*<div class="playlist__details">(?:\r?\n?)?'
+                            r'(?:\s)*<div class="playlist__heading">(?:\r?\n?)?'
+                            r'(?:\s)*<a(?:.+?)>Ленинград</a>(?:.+?)<a(?:.+?)>(?P<title>.+?)</a>'
+                            r'(?:\s)*<span(?:.+?)>Недоступен</span>')
+        re_artist_info = (r'(?:\s)*<i (?:.*?)title="Исполнитель"(?:.*?)'
+                          r'(?:\s)*></i>\r?\n?(?:\r?\n?)*'
+                          r'(?:\s)*<a (?:.+?)>\r?\n?(?:\r?\n?)*'
+                          r'(?:\s)*<meta (?:.+?)itemprop="url"(?:.*?)'
+                          r'(?:\s)*/?>\r?\n?(?:\r?\n?)*'
+                          r'(?:\s)*<meta (?:.+?)itemprop="name"(?:.*?)'
+                          r'(?:\s)*/?>\r?\n?(?:\r?\n?)*'
+                          r'(?:\s)*(.+?)\r?\n?(?:\r?\n?)*'
+                          r'(?:\s)*(</meta>)*\r?\n?(?:\s)*</a>')
+        re_title_info = (r'<meta(?:.*?)itemprop="position"(?:.*?)'
+                        r'(?:\s)*/?>\r?\n?(?:\r?\n?)*'
+                        r'(?:\s)*</a>\r?\n?(?:\r?\n?)*'
+                        r'(?:\s)*</li>\r?\n?(?:\r?\n?)*'
+                        r'(?:\s)*<li (?:.*?)class="breadcrumb-item active"(?:.*?)>(.+?)</li>')
         re_link_attr = "div"
-        re_link_keyword = "^Слушать.*"
-        re_link_href = '<div (?:.*?)data-url="(?P<link>.+\.mp3)"'
+        re_link_keyword = r"^Слушать.*"
 
     if args.socks:
         (socks_proxy, socks_port) = args.socks.split(":")
@@ -1088,9 +1087,8 @@ def main():
                     download_album(args.url, args.path, with_album_id)
                 else:
                     color_message(
-                        "** Error: unable to recognize url, it should contain '%s' or '%s'! **" % (re_artist_url, re_album_url),
-                        error_color
-                    )
+                        "** Error: unable to recognize url, it should contain '%s' or '%s'! **" 
+                        % (re_artist_url, re_album_url), error_color)
         else:
             if re.search(r"%s" % re_artist_url, args.url, re.IGNORECASE):
                 download_artist(args.url, args.path, with_album_id)
@@ -1098,16 +1096,15 @@ def main():
                 download_album(args.url, args.path, with_album_id)
             else:
                 color_message(
-                    "** Error: unable to recognize url, it should contain '%s' or '%s'! **" % (re_artist_url, re_album_url),
-                    error_color
-                )
+                    "** Error: unable to recognize url, it should contain '%s' or '%s'! **" 
+                    % (re_artist_url, re_album_url), error_color)
 
     except Exception as e:
         color_message("** Error: Cannot download URL: %s, reason: %s **" % (args.url, str(e)), error_color)
-        traceback.print_exc()
+        #traceback.print_exc()
     except KeyboardInterrupt as e:
         color_message("** main: Program interrupted by user, exiting! **", error_color)
-        # traceback.print_exc()
+        #traceback.print_exc()
         exit(1)
 
 
