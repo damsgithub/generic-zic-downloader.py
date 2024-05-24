@@ -1,5 +1,6 @@
 # generic-zic-downloader.py
 
+"all people are responsible for their tyrant" version
 
 Supports myzuka.club and musify.club, maybe more later
 
