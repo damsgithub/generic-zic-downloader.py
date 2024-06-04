@@ -1,7 +1,5 @@
 # generic-zic-downloader.py
 
-"all people are responsible for their tyrant" version
-
 Supports myzuka.club and musify.club, maybe more later
 
 Command line downloader with optionnal rich interface (think ncurses), features included:
@@ -22,7 +20,7 @@ TODO:
 
 BUGS:
 * it is more difficult to interrupt the script with ctrl-c in Windows with latests Python version, even with [this bug](https://bugs.python.org/issue42296) corrected.
-* Only with musify.club: if you interrupt the script and then relaunch it, it will sometimes append to the mp3 file from the beginning of the song instead of resuming the download... prefer myzuka.club until it is corrected. Although you will have this kind of message "{file_name} is already bigger ({dlded_size}) than the server side file ({real_size}). Either server side file size could not be determined or an other problem occured, check file manually" if you happen to relaunch the script a third time once everything is finished. So you will know if it happened and you will be able to delete these files and relaunch the script a fourth time to have them non corrupted...
+* Only with musify.club: if you interrupt the script and then relaunch it, it will sometimes append to the mp3 file from the beginning of the song instead of resuming the download... prefer myzuka.club until it is corrected. However you will have this kind of message *"{file_name} is already bigger ({dlded_size}) than the server side file ({real_size}). Either server side file size could not be determined or an other problem occured, check file manually"* if you happen to relaunch the script a third time once everything is finished. So you will know if it happened and you will be able to delete these files and relaunch the script a fourth time to have them non corrupted...
 * It does not support multiple artists when creating the directory, it will fall back to "Unknown", you will have to rename the dir by hand afterwards.
 * Some regexes (ie: the one to detect deleted tracks from website on myzuka) might be a little bit CPU intensives and are slowing down the script a bit compared to previous versions.
 
