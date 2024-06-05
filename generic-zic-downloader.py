@@ -6,6 +6,7 @@
 # as published by Sam Hocevar.  See the COPYING file for more details.
 
 # Changelog:
+# 6.1 corrections (disable resume on musify), enhancements, bug fixes
 # 6.0: lots of corrections, suppression of cfscrape and requests, refacto, etc...
 # 5.13: merge between myzuka end musify scripts
 # 5.12: corrections for global variables, interactive mode
@@ -19,7 +20,7 @@
 
 live = 1
 site = ""
-version = 6.0
+version = 6.1
 useragent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0"
 min_page_size = 8192
 covers_name = "cover.jpg"
@@ -35,6 +36,9 @@ min_retry_delay = 5
 max_retry_delay = 10
 nb_conn = 3
 log = 0
+max_rows = 0
+nb_rows = 0
+warn_size = 1
 
 # Regexes
 re_artist_url = ""
@@ -54,6 +58,7 @@ import re
 import sys
 import os
 import time
+import math
 import random
 import socks
 import socket
@@ -77,8 +82,9 @@ from rich.layout import Layout
 from rich.panel import Panel
 from rich.live import Live
 from rich.console import Console
-# from rich.text import Text
-# from rich.align import Align
+from rich import box
+#from rich.text import Text
+#from rich.align import Align
 
 # from rich import inspect
 # Rich can be installed as the default traceback handler so that all 
@@ -105,8 +111,7 @@ class Header:
         grid.add_column(justify="center", ratio=1)
         grid.add_column(justify="right")
         grid.add_row(
-            "[b]Music[/b] downloader, use Ctrl-c to exit (in Windows, "
-            + "you sometimes have to kill/close the console)",
+            "[b]Music[/b] downloader v%s, use Ctrl-c to exit or close the terminal" % version,
             datetime.now().ctime().replace(":", "[blink]:[/]"),
         )
         return Panel(grid, style="white on black")
@@ -121,7 +126,7 @@ def make_layout() -> Layout:
         Layout(name="main", ratio=1),
     )
     layout["main"].split_row(
-        Layout(name="left"),
+        Layout(name="left", ratio=1),
         Layout(name="center", ratio=2),
         Layout(name="right", ratio=1),
     )
@@ -130,9 +135,9 @@ def make_layout() -> Layout:
 
 layout = make_layout()
 console = Console()
-infos_table = Table(show_header=False)
-errors_table = Table(show_header=False)
-errors_console = Console()
+infos_table = Table(show_header=False, box=box.SIMPLE)
+errors_table = Table(show_header=False, box=box.SIMPLE)
+#errors_console = Console()
 #errors_text = Text()
 progress_table = Table.grid(expand=True)
 dl_progress = Progress()
@@ -140,7 +145,7 @@ dl_progress = Progress()
 
 def reset_errors():
     global errors_table
-    errors_table = Table(show_header=False)
+    errors_table = Table(show_header=False, box=box.SIMPLE)
     #layout["right"].update(Panel(errors_table))
 
 
@@ -272,21 +277,38 @@ def log_to_file(function, content):
 
 def color_message(msg, color):
     if live:
+        global nb_rows
+        global warn_size
         # Text test
-        # layout["right"].update(
-        #     Align.center(errors_text.append(datetime.now().ctime() + " " + msg + "\n", style=color),
-        #     vertical="bottom")
-        # )
-        #layout["right"].update(errors_text)
+        #errors_text = Align.center(Text.from_markup(msg + "\n", style=color, justify="center"), vertical="middle")
+        #layout["right"].update(Panel(errors_text))
         
         ## Console test
-        # with errors_console.pager():
-        #     errors_console.print(msg)
-        # layout["right"].update(errors_console)
+        #with errors_console.pager(styles=True, links=True):
+        #    errors_console.print(msg)
+        ##layout["right"].update(errors_console)
 
         # Table test
+        max_rows = os.get_terminal_size()[1] - 8
+        errors_table_width = (os.get_terminal_size()[0] / 4) - 8
+        if (max_rows <= 30 or errors_table_width <= 30) and warn_size:
+            infos_table.add_row("[" + warning_color + "]" + "** Your terminal size is likely too little"
+                                + " for live mode, either increase its size or disable live mode **")
+            layout["left"].update(Panel(infos_table))
+            warn_size = 0
+
+        #msg = msg + " max_rows: %s, nb_rows: %s" % (max_rows, nb_rows)
+        lines_occupied = math.ceil(len(msg) / errors_table_width)
+        nb_rows += lines_occupied
+
+        if nb_rows >= (max_rows):
+            reset_errors()
+            nb_rows = 0
+
         errors_table.add_row("[" + color + "]" + msg)
         layout["right"].update(Panel(errors_table))
+
+
     else:
         console.print(msg, style=color)
 
@@ -349,14 +371,16 @@ def open_url(url, data, range_header):
             if debug > 1:
                 color_message("HTTP reponse code: %s" % u, debug_color)
         except urllib.error.HTTPError as e:
-            if int(u) > 400:
+            if re.match(r"^HTTP Error 4\d+", str(e)):
                 color_message("** urllib.error.HTTPError (%s), aborting **" 
-                    % e.reason, error_color)
+                    % str(e), error_color)
+                color_message("** You likely have been banned from the website for a period of time "
+                              + "by downloading too much or too fast **", error_color)
                 u = None
             else:
                 color_message("** requests.exceptions.HTTPError (%s), reconnecting **" 
                     % str(e), warning_color)
-            continue
+                continue
         except urllib.error.URLError as e:
             if re.search("timed out", str(e.reason)):
                 # on linux "timed out" is a socket.timeout exception,
@@ -893,20 +917,28 @@ def download_album(url, base_path, with_album_id):
 
     os.chdir("..")
 
-    if not absent_track_flag and not event.is_set():
+    if event.is_set():
+        if live:
+            infos_table.add_row("[" + error_color + "]" + 
+                "** %s ALBUM INCOMPLETE (user exit) **" % album_dir)
+            layout["left"].update(Panel(infos_table))
+        else:
+            color_message("** %s ALBUM INCOMPLETE (user exit) **" 
+                % album_dir, error_color)
+    elif absent_track_flag:
+        if live:
+            infos_table.add_row("[" + error_color + "]" + 
+                "** %s ALBUM INCOMPLETE (tracks missing) **" % album_dir)
+            layout["left"].update(Panel(infos_table))
+        else:
+            color_message("** %s ALBUM INCOMPLETE (tracks missing) **" 
+                % album_dir, error_color)
+    else:
         if live:
             infos_table.add_row("[" + ok_color + "]" + "** %s FINISHED **" % album_dir)
             layout["left"].update(Panel(infos_table))
         else:
-            color_message("** %s FINISHED **" % album_dir, ok_color)
-    else:
-        if live:
-            infos_table.add_row("[" + error_color + "]" + 
-                "** %s ALBUM INCOMPLETE (tracks missing on website or user exit) **" % album_dir)
-            layout["left"].update(Panel(infos_table))
-        else:
-            color_message("** %s ALBUM INCOMPLETE (tracks missing on website or user exit) **" 
-                % album_dir, error_color)
+            color_message("** %s FINISHED **" % album_dir, ok_color)    
 
 
 def download_artist(url, base_path, with_album_id):
@@ -1118,7 +1150,7 @@ def main():
 
     except Exception as e:
         color_message("** Error: Cannot download URL: %s, reason: %s **" % (args.url, str(e)), error_color)
-        #traceback.print_exc()
+        traceback.print_exc()
     except KeyboardInterrupt as e:
         color_message("** main: Program interrupted by user, exiting! **", error_color)
         #traceback.print_exc()
