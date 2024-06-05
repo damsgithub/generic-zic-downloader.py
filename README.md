@@ -39,7 +39,7 @@ Usage:
 * Just give it an album or artist url from myzuka.club or musify.club as argument, see below:
 
 ```
-Python script to download albums from myzuka.club or musify.club, version 5.14
+Python script to download albums from myzuka.club or musify.club, version 6.1
 
 Exemple with myzuka.club:
 
@@ -116,6 +116,7 @@ optional arguments:
   -n NB_CONN, --nb_conn NB_CONN
                         Number of simultaneous downloads (max 3 for tempfile.ru)
   -p PATH, --path PATH  Base directory in which album(s) will be downloaded. Defaults to current directory.
+  --with_album_id       Include the myzuka album ID in the directory name, to seperate albums with multiples cd in different dirs
   -v, --version         show program's version number and exit
   
 ```
