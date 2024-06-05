@@ -292,7 +292,7 @@ def color_message(msg, color):
         max_rows = os.get_terminal_size()[1] - 8
         errors_table_width = (os.get_terminal_size()[0] / 4) - 8
         if (max_rows <= 30 or errors_table_width <= 30) and warn_size:
-            infos_table.add_row("[" + warning_color + "]" + "** Your terminal size is likely too little"
+            infos_table.add_row("[" + warning_color + "]" + "** Your terminal size is likely too small"
                                 + " for live mode, either increase its size or disable live mode **")
             layout["left"].update(Panel(infos_table))
             warn_size = 0
@@ -369,7 +369,7 @@ def open_url(url, data, range_header):
         try:
             u = urllib.request.urlopen(req, timeout=timeout)
             if debug > 1:
-                color_message("HTTP reponse code: %s" % u, debug_color)
+                color_message("HTTP reponse code: %s" % u.getcode(), debug_color)
         except urllib.error.HTTPError as e:
             if re.match(r"^HTTP Error 4\d+", str(e)):
                 color_message("** urllib.error.HTTPError (%s), aborting **" 
@@ -391,7 +391,7 @@ def open_url(url, data, range_header):
                 pause_between_retries()
                 continue
             else:
-                color_message("** urllib.error.URLError, aborting **" % e.reason, error_color)
+                color_message("** urllib.error.URLError, aborting (%s) **" % e.reason, error_color)
                 u = None
         except (socket.timeout, socket.error, ConnectionError) as e:
             if debug:
@@ -468,7 +468,7 @@ def prepare_album_dir(page_url, page_content, base_path, with_album_id):
 
     # prepare album's directory
     album_id =  re.compile('%s' % re_album_id).search(page_url).group(1)
-    album_id_prefix = (album_id + " – " if with_album_id else "")
+    album_id_prefix = (album_id + " - " if with_album_id else "")
     if year:
         album_dir = album_id_prefix + artist + " - " + title + " (" + year + ")"
     else:
@@ -500,7 +500,8 @@ def get_filename_from_cd(cdisposition):
 
 
 def download_file(tracknum, url, task_id: TaskID):
-    process_id = os.getpid()
+    #process_id = os.getpid()
+    process_id = threading.get_native_id()
     file_name = ""
     
     try:
