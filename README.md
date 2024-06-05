@@ -19,10 +19,10 @@ TODO:
 * streaming mode?
 
 BUGS:
-* it is more difficult to interrupt the script with ctrl-c in Windows with latests Python version, even with [this bug](https://bugs.python.org/issue42296) corrected.
-* Resuming incomplete songs downloads is disabled on Musify, due to a bug on their part. The download will be restarted from the beginning.
+* it is more difficult to interrupt the script with ctrl-c in Windows with latests Python version, even with [this bug](https://bugs.python.org/issue42296) corrected. Just close the shell window if needed.
+* Resuming incomplete songs downloads is disabled on Musify, due to a corrupting bug on their part. The download will be restarted from the beginning instead.
 * It does not support multiple artists when creating the directory, it will fall back to "Unknown", you will have to rename the dir by hand afterwards.
-* Some regexes (ie: the one to detect deleted tracks from website on myzuka) might be a little bit CPU intensives and are slowing down the script a bit compared to previous versions.
+* Some regexes (ie: the one to detect deleted tracks on myzuka) might be a little bit CPU intensives and are slowing down the start of the script a bit compared to previous versions.
 
 Install:
 * install python 3 (tested with 3.6, 3.9, 3.12) if not already present on your distrib. For Windows, see [here](https://www.python.org/downloads/windows/) or install from the Windows Store.
