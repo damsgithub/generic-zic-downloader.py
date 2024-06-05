@@ -34,6 +34,7 @@ timeout = 10
 min_retry_delay = 5
 max_retry_delay = 10
 nb_conn = 3
+log = 0
 
 # Regexes
 re_artist_url = ""
@@ -398,7 +399,7 @@ def prepare_album_dir(page_url, page_content, base_path, with_album_id):
     title = ""
     year = ""
 
-    if debug > 1:
+    if log:
         log_to_file("prepare_album_dir", page_content)
 
     color_message("", ok_color)
@@ -502,8 +503,6 @@ def download_file(tracknum, url, task_id: TaskID):
                 file_name = file_name.replace("_myzuka", "")
             elif "musify" in site:
                 file_name = url.split("/")[-1]
-                #import urllib.parse
-                #file_name = urllib.parse.unquote(file_name) # works
                 file_name = urllib.request.url2pathname(file_name) # works too
                   
             # add tracknum for the song if it wasn't included in file_name (musify)
@@ -555,31 +554,41 @@ def download_file(tracknum, url, task_id: TaskID):
                         )
                     continue
 
-        # find where to start the file download (continue or start at beginning)
+        # find where to start the file download (resume or start at beginning)
         if 0 < dlded_size < real_size:
-            # file incomplete, we need to resume download at correct range
-            u.close()
+            # musify does not correctly support this, there is a mismatch in byte offset that create shorters
+            # and corrupted downloaded files. Even "curl" has the same problem while resuming downloads on musify.
+            if "musify" not in site:
+                # file incomplete, we need to resume download at correct range
+                u.close()
 
-            range_header = "bytes=%s-%s" % (dlded_size, real_size)
-            data = None
-            u = open_url(url, data, range_header)
-            if not u:
-                return -1
+                range_header = "bytes=%s-%s" % (dlded_size, real_size)
+                data = None
+                u = open_url(url, data, range_header)
+                if not u:
+                    return -1
 
-            # test if the server supports the Range header
-            range_support = ""
-            range_support = u.getcode()
+                # test if the server supports the Range header
+                range_support = ""
+                range_support = u.getcode()
 
-            if range_support == 206:
-                partial_dl = 1
+                if range_support == 206:
+                    partial_dl = 1
+                    if debug:
+                        color_message(
+                            "** Range/partial download is supported by server for %s **" % file_name,
+                            ok_color)
+                else:
+                    dlded_size = 0
+                    if debug:
+                        color_message(
+                            "** Range/partial download is not supported by server, "
+                            + "restarting download at beginning **",
+                            warning_color)
             else:
-                if debug:
-                    color_message(
-                        "** Range/partial download is not supported by server, "
-                        + "restarting download at beginning **",
-                        warning_color,
-                    )
+                # musify
                 dlded_size = 0
+
         elif dlded_size == real_size:
             # file already completed, skipped
             color_message("%s (already complete)" % file_name, ok_color)
@@ -588,10 +597,10 @@ def download_file(tracknum, url, task_id: TaskID):
             dl_progress.update(task_id, total=int(real_size), advance=dlded_size)
             return
         elif dlded_size > real_size:
-            # we got a problem, restart download from start
+            # we got a problem, check manually
             color_message(f"** {file_name} is already bigger ({dlded_size}) than the server side "
                             f"file ({real_size}). Either server side file size could not be determined "
-                            f"or an other problem occured, check file manually **",
+                            f"or an other problem occured, check file manually or delete it to retry **",
                 warning_color
             )
             u.close()
@@ -607,6 +616,7 @@ def download_file(tracknum, url, task_id: TaskID):
         else:
             f = open(file_name, "wb+")
 
+        # for the covers whose sizes could be < of our defined block_sz, we reduce it
         if real_size < block_sz:
             block_sz = 512
 
@@ -645,6 +655,13 @@ def download_file(tracknum, url, task_id: TaskID):
             u.close()
             f.close()
             return -1
+        elif dlded_size > real_size:
+            # we got a problem, check manually
+            color_message(f"** {file_name} is bigger ({dlded_size}) than the server side "
+                            f"file ({real_size}). Either server side file size could not be determined "
+                            f"or an other problem occured, check file manually **",
+                warning_color
+            )
 
         u.close()
         f.close()
@@ -839,7 +856,7 @@ def download_album(url, base_path, with_album_id):
     if debug > 1:
         color_message("** songs_links: %s **" % songs_links, error_color)
 
-    if debug > 1:
+    if log:
         log_to_file("download_album", page_content)
  
     if not songs_links:
